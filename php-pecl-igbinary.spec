@@ -6,7 +6,7 @@
 Summary:	Replacement for the standard PHP serializer
 Name:		php-pecl-%{modname}
 Version:	1.1.1
-Release:	1
+Release:	2
 License:	BSD
 Group:		Libraries
 URL:		http://pecl.php.net/package/igbinary
@@ -20,8 +20,10 @@ Source2:	%{modname}.ini
 Patch0:		apc-modname.patch
 %{?with_tests:BuildRequires:	/usr/bin/php}
 BuildRequires:	php-devel >= 4:5.2.0
+%{?with_tests:BuildRequires:	php-pcre}
 %{?with_tests:BuildRequires:	php-pecl-APC}
 #BuildRequires:	php-pecl-apc-devel >= 3.1.7
+%{?with_tests:BuildRequires:	php-session}
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
