@@ -6,7 +6,7 @@
 Summary:	Replacement for the standard PHP serializer
 Name:		php-pecl-%{modname}
 Version:	1.1.1
-Release:	2
+Release:	3
 License:	BSD
 Group:		Libraries
 URL:		http://pecl.php.net/package/igbinary
@@ -24,6 +24,7 @@ BuildRequires:	php-devel >= 4:5.2.0
 %{?with_tests:BuildRequires:	php-pecl-APC}
 #BuildRequires:	php-pecl-apc-devel >= 3.1.7
 %{?with_tests:BuildRequires:	php-session}
+Requires:	php-session
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
@@ -86,7 +87,7 @@ install -d $RPM_BUILD_ROOT{%{php_sysconfdir}/conf.d,%{php_extensiondir}}
 	EXTENSION_DIR=%{php_extensiondir} \
 	INSTALL_ROOT=$RPM_BUILD_ROOT
 
-cp -p %{SOURCE2} $RPM_BUILD_ROOT%{php_sysconfdir}/conf.d/%{modname}.ini
+cp -p %{SOURCE2} $RPM_BUILD_ROOT%{php_sysconfdir}/conf.d/session_%{modname}.ini
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -94,7 +95,7 @@ rm -rf $RPM_BUILD_ROOT
 %files
 %defattr(644,root,root,755)
 %doc COPYING CREDITS NEWS README
-%config(noreplace) %verify(not md5 mtime size) %{php_sysconfdir}/conf.d/%{modname}.ini
+%config(noreplace) %verify(not md5 mtime size) %{php_sysconfdir}/conf.d/*%{modname}.ini
 %attr(755,root,root) %{php_extensiondir}/%{modname}.so
 
 %files devel
