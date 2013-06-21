@@ -2,9 +2,10 @@
 # Conditional build:
 %bcond_without	tests		# build without tests
 
+%define		php_name	php%{?php_suffix}
 %define		modname	igbinary
 Summary:	Replacement for the standard PHP serializer
-Name:		php-pecl-%{modname}
+Name:		%{php_name}-pecl-%{modname}
 Version:	1.1.1
 Release:	4
 License:	BSD
@@ -18,13 +19,14 @@ Source1:	https://github.com/igbinary/igbinary/tarball/1.1.1/tests#/%{modname}-te
 # Source1-md5:	b171ba8b230f6de3e7095500515fc6bb
 Source2:	%{modname}.ini
 Patch0:		apc-modname.patch
-%{?with_tests:BuildRequires:	/usr/bin/php}
-BuildRequires:	php-devel >= 4:5.2.0
-%{?with_tests:BuildRequires:	php-pcre}
-%{?with_tests:BuildRequires:	php-pecl-APC}
+%{?with_tests:BuildRequires:	%{php_name}-cli}
+BuildRequires:	%{php_name}-devel >= 4:5.2.0
+%{?with_tests:BuildRequires:	%{php_name}-pcre}
+#%{?with_tests:BuildRequires:	%{php_name}-pecl-APC}
+%{?with_tests:BuildRequires:	%{php_name}-session}
+%{?with_tests:BuildRequires:	%{php_name}-spl}
 #BuildRequires:	php-pecl-apc-devel >= 3.1.7
-%{?with_tests:BuildRequires:	php-session}
-Requires:	php-session
+Requires:	%{php_name}-session
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
@@ -38,7 +40,7 @@ serialized data.
 %package devel
 Summary:	Igbinary developer files (header)
 Group:		Development/Libraries
-Requires:	php-devel
+Requires:	%{php_name}-devel
 # does not require base
 
 %description devel
@@ -60,7 +62,7 @@ phpize
 
 # simple module load test
 # without APC to ensure than can run without
-%{__php} -n \
+%{__php}%{?php_suffix} -n \
 	-dextension_dir=modules \
 	-dextension=%{php_extensiondir}/spl.so \
 	-dextension=%{php_extensiondir}/session.so \
