@@ -77,7 +77,8 @@ grep %{modname} modules.log
 cat <<'EOF' > run-tests.sh
 #!/bin/sh
 %{__make} test \
-	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="pcre spl session" \
+	PHP_EXECUTABLE=%{__php} \
+	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="simplexml pcre spl session" \
 	RUN_TESTS_SETTINGS="-q $*"
 EOF
 
