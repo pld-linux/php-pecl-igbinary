@@ -65,6 +65,7 @@ phpize
 # without APC to ensure than can run without
 %{__php} -n -q \
 	-dextension_dir=modules \
+	-dextension=%{php_extensiondir}/pcre.so \
 	-dextension=%{php_extensiondir}/spl.so \
 	-dextension=%{php_extensiondir}/session.so \
 	-dextension=%{modname}.so \
