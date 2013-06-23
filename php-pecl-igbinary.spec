@@ -24,6 +24,7 @@ BuildRequires:	%{php_name}-devel >= 4:5.2.0
 %{?with_tests:BuildRequires:	%{php_name}-pcre}
 #%{?with_tests:BuildRequires:	%{php_name}-pecl-APC}
 %{?with_tests:BuildRequires:	%{php_name}-session}
+%{?with_tests:BuildRequires:	%{php_name}-simplexml}
 %{?with_tests:BuildRequires:	%{php_name}-spl}
 #BuildRequires:	php-pecl-apc-devel >= 3.1.7
 BuildRequires:	rpmbuild(macros) >= 1.666
@@ -65,6 +66,7 @@ phpize
 # without APC to ensure than can run without
 %{__php} -n -q \
 	-dextension_dir=modules \
+	-dextension=%{php_extensiondir}/simplexml.so \
 	-dextension=%{php_extensiondir}/pcre.so \
 	-dextension=%{php_extensiondir}/spl.so \
 	-dextension=%{php_extensiondir}/session.so \
