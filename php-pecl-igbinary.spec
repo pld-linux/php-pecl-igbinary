@@ -26,6 +26,7 @@ BuildRequires:	%{php_name}-devel >= 4:5.2.0
 %{?with_tests:BuildRequires:	%{php_name}-session}
 %{?with_tests:BuildRequires:	%{php_name}-spl}
 #BuildRequires:	php-pecl-apc-devel >= 3.1.7
+BuildRequires:	rpmbuild(macros) >= 1.666
 Requires:	%{php_name}-session
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
@@ -62,7 +63,7 @@ phpize
 
 # simple module load test
 # without APC to ensure than can run without
-%{__php}%{?php_suffix} -n \
+%{__php} -n -q \
 	-dextension_dir=modules \
 	-dextension=%{php_extensiondir}/spl.so \
 	-dextension=%{php_extensiondir}/session.so \
