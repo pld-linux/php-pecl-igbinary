@@ -7,7 +7,7 @@
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
 Version:	1.1.1
-Release:	4
+Release:	5
 License:	BSD
 Group:		Libraries
 URL:		http://pecl.php.net/package/igbinary
