@@ -10,7 +10,6 @@ Version:	1.1.1
 Release:	5
 License:	BSD
 Group:		Libraries
-URL:		http://pecl.php.net/package/igbinary
 Source0:	http://pecl.php.net/get/%{modname}-%{version}.tgz
 # Source0-md5:	4ad53115ed7d1d452cbe50b45dcecdf2
 # http://pecl.php.net/bugs/22598
@@ -19,6 +18,7 @@ Source1:	https://github.com/igbinary/igbinary/tarball/%{version}/tests?/%{modnam
 # Source1-md5:	b171ba8b230f6de3e7095500515fc6bb
 Source2:	%{modname}.ini
 Patch0:		apc-modname.patch
+URL:		http://pecl.php.net/package/igbinary
 %{?with_tests:BuildRequires:	%{php_name}-cli}
 BuildRequires:	%{php_name}-devel >= 4:5.2.0
 %{?with_tests:BuildRequires:	%{php_name}-pcre}
