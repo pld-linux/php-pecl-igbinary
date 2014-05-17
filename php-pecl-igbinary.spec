@@ -7,7 +7,7 @@
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
 Version:	1.1.1
-Release:	6
+Release:	7
 License:	BSD
 Group:		Libraries
 Source0:	http://pecl.php.net/get/%{modname}-%{version}.tgz
@@ -30,6 +30,7 @@ BuildRequires:	%{php_name}-devel >= 4:5.2.0
 BuildRequires:	rpmbuild(macros) >= 1.666
 Requires:	%{php_name}-session
 Provides:	php(%{modname}) = %{version}
+Obsoletes:	php-pecl-igbinary < 1.1.1-6
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
 %description
