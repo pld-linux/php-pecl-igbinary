@@ -71,9 +71,9 @@ phpize
 # without APC to ensure that can run without
 %{__php} -n -q \
 	-dextension_dir=modules \
+	-dextension=%{php_extensiondir}/pcre.so \
 	-dextension=%{php_extensiondir}/spl.so \
 	-dextension=%{php_extensiondir}/simplexml.so \
-	-dextension=%{php_extensiondir}/pcre.so \
 	-dextension=%{php_extensiondir}/session.so \
 	-dextension=%{modname}.so \
 	-m > modules.log
@@ -83,7 +83,7 @@ cat <<'EOF' > run-tests.sh
 #!/bin/sh
 %{__make} test \
 	PHP_EXECUTABLE=%{__php} \
-	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="spl simplexml pcre session" \
+	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="pcre spl simplexml session" \
 	RUN_TESTS_SETTINGS="-q $*"
 EOF
 
