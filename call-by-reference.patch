@@ -1,0 +1,12 @@
+PHP Fatal error:  Call-time pass-by-reference has been removed
+--- php55-pecl-igbinary-1.1.1/tests/igbinary_024.phpt	2011-01-17 16:24:32.000000000 +0200
++++ php55-pecl-igbinary-1.1.1/tests/igbinary_024.phpt	2014-06-12 16:02:44.580654091 +0300
+@@ -81,7 +81,7 @@
+ test('objectrecarr', $o3, false);
+ 
+ $o4 = new Obj4(100);
+-$o4->set(&$o4);
++$o4->set($o4);
+ test('objectselfrec', $o4, true);
+ 
+ /*

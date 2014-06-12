@@ -7,7 +7,7 @@
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
 Version:	1.1.1
-Release:	7
+Release:	8
 License:	BSD
 Group:		Libraries
 Source0:	http://pecl.php.net/get/%{modname}-%{version}.tgz
@@ -18,6 +18,7 @@ Source1:	https://github.com/igbinary/igbinary/tarball/%{version}/tests?/%{modnam
 # Source1-md5:	b171ba8b230f6de3e7095500515fc6bb
 Source2:	%{modname}.ini
 Patch0:		apc-modname.patch
+Patch1:		call-by-reference.patch
 URL:		http://pecl.php.net/package/igbinary
 %{?with_tests:BuildRequires:	%{php_name}-cli}
 BuildRequires:	%{php_name}-devel >= 4:5.2.0
@@ -55,6 +56,7 @@ These are the files needed to compile programs using Igbinary
 mv %{modname}-%{version}/* .
 mv igbinary-igbinary-bef0aca/tests .
 %patch0 -p1
+%patch1 -p1
 
 # broken
 rm tests/igbinary_unserialize_v1_compatible.phpt
