@@ -6,19 +6,13 @@
 %define		modname	igbinary
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
-Version:	1.1.1
-Release:	7
+Version:	1.2.0
+Release:	1
 License:	BSD
 Group:		Libraries
 Source0:	http://pecl.php.net/get/%{modname}-%{version}.tgz
-# Source0-md5:	4ad53115ed7d1d452cbe50b45dcecdf2
-# http://pecl.php.net/bugs/22598
-# https://github.com/igbinary/igbinary/tree/1.1.1/tests
-Source1:	https://github.com/igbinary/igbinary/tarball/%{version}/tests?/%{modname}-tests.tgz
-# Source1-md5:	b171ba8b230f6de3e7095500515fc6bb
+# Source0-md5:	3755f17c73e7ef1fa022efd3b49d0573
 Source2:	%{modname}.ini
-Patch0:		apc-modname.patch
-Patch1:		call-by-reference.patch
 URL:		http://pecl.php.net/package/igbinary
 %{?with_tests:BuildRequires:	%{php_name}-cli}
 BuildRequires:	%{php_name}-devel >= 4:5.2.0
@@ -53,14 +47,8 @@ Requires:	%{php_name}-devel
 These are the files needed to compile programs using Igbinary
 
 %prep
-%setup -qc -a1
-mv %{modname}-%{version}/* .
-mv igbinary-igbinary-bef0aca/tests .
-%patch0 -p1
-%patch1 -p1
-
-# broken
-rm tests/igbinary_unserialize_v1_compatible.phpt
+%setup -qc
+mv %{modname}-*/* .
 
 %build
 phpize
@@ -109,7 +97,7 @@ rm -rf $RPM_BUILD_ROOT
 
 %files
 %defattr(644,root,root,755)
-%doc COPYING CREDITS NEWS README
+%doc COPYING CREDITS NEWS README.md
 %config(noreplace) %verify(not md5 mtime size) %{php_sysconfdir}/conf.d/*%{modname}.ini
 %attr(755,root,root) %{php_extensiondir}/%{modname}.so
 
