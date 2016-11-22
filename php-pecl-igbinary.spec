@@ -6,12 +6,12 @@
 %define		modname	igbinary
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
-Version:	1.2.0
+Version:	2.0.0
 Release:	1
 License:	BSD
 Group:		Libraries
 Source0:	http://pecl.php.net/get/%{modname}-%{version}.tgz
-# Source0-md5:	3755f17c73e7ef1fa022efd3b49d0573
+# Source0-md5:	89e1250807864d13df7b07710a187edf
 Source2:	%{modname}.ini
 URL:		http://pecl.php.net/package/igbinary
 %{?with_tests:BuildRequires:	%{php_name}-cli}
