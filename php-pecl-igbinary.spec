@@ -106,7 +106,11 @@ install -d $RPM_BUILD_ROOT{%{php_sysconfdir}/conf.d,%{php_extensiondir}}
 	EXTENSION_DIR=%{php_extensiondir} \
 	INSTALL_ROOT=$RPM_BUILD_ROOT
 
+%if "%php_major_version.%php_minor_version" >= "7.4"
+cp -p %{SOURCE2} $RPM_BUILD_ROOT%{php_sysconfdir}/conf.d/01_%{modname}.ini
+%else
 cp -p %{SOURCE2} $RPM_BUILD_ROOT%{php_sysconfdir}/conf.d/session_%{modname}.ini
+%endif
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -114,7 +118,7 @@ rm -rf $RPM_BUILD_ROOT
 %files
 %defattr(644,root,root,755)
 %doc COPYING CREDITS NEWS README.md
-%config(noreplace) %verify(not md5 mtime size) %{php_sysconfdir}/conf.d/*%{modname}.ini
+%config(noreplace) %verify(not md5 mtime size) %{php_sysconfdir}/conf.d/*_%{modname}.ini
 %attr(755,root,root) %{php_extensiondir}/%{modname}.so
 
 %files devel
