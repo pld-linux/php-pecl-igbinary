@@ -6,22 +6,20 @@
 %define		modname	igbinary
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
-Version:	2.0.8
+Version:	3.0.1
 Release:	1
 License:	BSD
 Group:		Development/Languages/PHP
 Source0:	https://pecl.php.net/get/%{modname}-%{version}.tgz
-# Source0-md5:	d3cbbfe6224923fecdad266569b57535
+# Source0-md5:	fb3b2f7fa306ca582afd9f382c409a24
 Source2:	%{modname}.ini
 URL:		https://pecl.php.net/package/igbinary
 %{?with_tests:BuildRequires:	%{php_name}-cli}
-BuildRequires:	%{php_name}-devel >= 4:5.2.0
+BuildRequires:	%{php_name}-devel >= 4:7.0
 %{?with_tests:BuildRequires:	%{php_name}-pcre}
-#%{?with_tests:BuildRequires:	%{php_name}-pecl-APC}
 %{?with_tests:BuildRequires:	%{php_name}-session}
 %{?with_tests:BuildRequires:	%{php_name}-simplexml}
 %{?with_tests:BuildRequires:	%{php_name}-spl}
-#BuildRequires:	php-pecl-apc-devel >= 3.1.7
 BuildRequires:	rpmbuild(macros) >= 1.666
 %{?requires_php_extension}
 Requires:	%{php_name}-session
@@ -32,12 +30,10 @@ BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 %description
 Igbinary is a drop in replacement for the standard PHP serializer.
 
-Instead of the time and space consuming textual representation used by
-PHP's serialize, igbinary stores php data structures in a compact
-binary form. Memory savings are significant when using memcached,
-APCu, or similar memory based storages for serialized data. The
-typical reduction in storage requirements are around 50%. The exact
-percentage depends on your data.
+Instead of time and space consuming textual representation, igbinary
+stores php data structures in a compact binary form. Savings are
+significant when using memcached or similar memory based storages for
+serialized data.
 
 %package devel
 Summary:	Igbinary developer files (header)
@@ -57,7 +53,11 @@ cat <<'EOF' > run-tests.sh
 export NO_INTERACTION=1 REPORT_EXIT_STATUS=1 MALLOC_CHECK_=2
 exec %{__make} test \
 	PHP_EXECUTABLE=%{__php} \
+%if "%php_major_version.%php_minor_version" >= "7.4"
+	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="simplexml session" \
+%else
 	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="pcre spl simplexml session" \
+%endif
 	RUN_TESTS_SETTINGS="-q $*"
 EOF
 chmod +x run-tests.sh
@@ -85,7 +85,6 @@ phpize
 %{__make}
 
 # simple module load test
-# without APC to ensure that can run without
 %{__php} -n -q \
 	-dextension_dir=modules \
 	-dextension=%{php_extensiondir}/pcre.so \
@@ -97,7 +96,6 @@ phpize
 grep %{modname} modules.log
 
 %if %{with tests}
-# APC required for test 045
 ./run-tests.sh --show-diff
 %endif
 
