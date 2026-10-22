@@ -4,21 +4,27 @@
 
 %define		php_name	php%{?php_suffix}
 %define		modname	igbinary
+%define		subver	RC1
+%define		rel	1
 Summary:	Replacement for the standard PHP serializer
 Name:		%{php_name}-pecl-%{modname}
-Version:	3.1.2
-Release:	1
+Version:	3.2.17
+Release:	0.%{subver}.%{rel}
 License:	BSD
 Group:		Development/Languages/PHP
-Source0:	https://pecl.php.net/get/%{modname}-%{version}.tgz
-# Source0-md5:	34280e1609ef8e23f67fe3e690405787
+Source0:	https://pecl.php.net/get/%{modname}-%{version}%{subver}.tgz
+# Source0-md5:	84d49a68917b5ad5cf087ee7286e91ba
 Source2:	%{modname}.ini
+Patch0:		shared-session.patch
+Patch1:		session-upload-progress.patch
+Patch2:		unserialize-truncated.patch
+Patch3:		unserialize-long64-32bit.patch
 URL:		https://pecl.php.net/package/igbinary
+%{?with_tests:BuildRequires:	%{php_name}-cgi}
 %{?with_tests:BuildRequires:	%{php_name}-cli}
 BuildRequires:	%{php_name}-devel >= 4:7.0
 %{?with_tests:BuildRequires:	%{php_name}-pcre}
 %{?with_tests:BuildRequires:	%{php_name}-session}
-%{?with_tests:BuildRequires:	%{php_name}-simplexml}
 %{?with_tests:BuildRequires:	%{php_name}-spl}
 BuildRequires:	rpmbuild(macros) >= 1.666
 %{?requires_php_extension}
@@ -47,37 +53,25 @@ These are the files needed to compile programs using Igbinary
 %prep
 %setup -qc
 mv %{modname}-*/* .
+%patch -P0 -p1
+%patch -P1 -p1
+%patch -P2 -p1
+%patch -P3 -p1
 
 cat <<'EOF' > run-tests.sh
 #!/bin/sh
 export NO_INTERACTION=1 REPORT_EXIT_STATUS=1 MALLOC_CHECK_=2
+export TEST_PHP_CGI_EXECUTABLE=%{__php}.cgi
 exec %{__make} test \
 	PHP_EXECUTABLE=%{__php} \
 %if "%php_major_version.%php_minor_version" >= "7.4"
-	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="simplexml session" \
+	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="session" \
 %else
-	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="pcre spl simplexml session" \
+	PHP_TEST_SHARED_SYSTEM_EXTENSIONS="pcre spl session" \
 %endif
 	RUN_TESTS_SETTINGS="-q $*"
 EOF
 chmod +x run-tests.sh
-
-xfail() {
-	local t=$1
-	test -f $t
-	cat >> $t <<-EOF
-
-	--XFAIL--
-	Skip
-	EOF
-}
-
-while read line; do
-	t=${line##*\[}; t=${t%\]}
-	xfail $t
-done << 'EOF'
-Test serializing multiple reference groups to the same empty array [tests/igbinary_067.phpt]
-EOF
 
 %build
 phpize
@@ -87,9 +81,10 @@ phpize
 # simple module load test
 %{__php} -n -q \
 	-dextension_dir=modules \
+%if "%php_major_version.%php_minor_version" < "7.4"
 	-dextension=%{php_extensiondir}/pcre.so \
 	-dextension=%{php_extensiondir}/spl.so \
-	-dextension=%{php_extensiondir}/simplexml.so \
+%endif
 	-dextension=%{php_extensiondir}/session.so \
 	-dextension=%{modname}.so \
 	-m > modules.log

@@ -1,0 +1,591 @@
+Keep session objects as __PHP_Incomplete_Class during session upload progress.
+php_session_rfc1867_update() decodes and re-encodes the session before RINIT,
+when no user code may run; php-src keeps every object incomplete there, igbinary
+still autoloaded classes, called unserialize_callback_func, __wakeup(),
+__unserialize() and Serializable::unserialize(), and destroyed sessions holding
+Serializable objects of not yet declared classes.
+
+Bug: https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w
+See-also: https://github.com/php/php-src/commit/3584a98bda0f
+
+diff --git a/src/php7/igbinary.c b/src/php7/igbinary.c
+index 9a1b72e..6747818 100644
+--- a/src/php7/igbinary.c
++++ b/src/php7/igbinary.c
+@@ -34,6 +34,15 @@
+ 
+ #include "ext/standard/php_incomplete_class.h"
+ 
++/* Members of __PHP_Incomplete_Class holding a Serializable payload or an enum case name
++ * in incomplete_classes_only mode, named as in php-src releases that have this mode. */
++#ifndef MAGIC_MEMBER_SERIALIZED
++# define MAGIC_MEMBER_SERIALIZED "__PHP_Incomplete_Class_Serialized"
++#endif
++#ifndef MAGIC_MEMBER_ENUM_CASE
++# define MAGIC_MEMBER_ENUM_CASE "__PHP_Incomplete_Enum_Case"
++#endif
++
+ #if PHP_VERSION_ID < 70400
+ #define zend_get_properties_for(struc, purpose) Z_OBJPROP_P((struc))
+ 
+@@ -201,6 +210,7 @@ struct igbinary_serialize_data {
+ 	struct hash_si_ptr references; /**< Hash of already serialized potential references. (non-NULL uintptr_t => int32_t) */
+ 	uint32_t references_id;        /**< Number of things that the unserializer might think are references. >= length of references */
+ 	uint32_t string_count;         /**< Serialized string count, used for back referencing */
++	bool incomplete_classes_only;  /**< Write back the payloads kept by incomplete_classes_only unserialization. */
+ 
+ 	struct deferred_dtor_tracker deferred_dtor_tracker;  /**< refcounted objects and arrays to call dtor on after serializing. See i_zval_ptr_dtor */
+ };
+@@ -273,6 +283,10 @@ struct igbinary_unserialize_data {
+ #if PHP_VERSION_ID >= 70400
+ 	HashTable *ref_props; /**< objects&data for calls to __unserialize/__wakeup */
+ #endif
++	/** Keep every object as __PHP_Incomplete_Class without resolving its class: no autoloading,
++	 * no unserialize_callback_func, no __wakeup(), __unserialize() or Serializable::unserialize().
++	 * The objects serialize back to the same data. */
++	zend_bool incomplete_classes_only;
+ };
+ 
+ #define IGB_REF_VAL_2(igsd, n)	((igsd)->references[(n)])
+@@ -856,6 +870,17 @@ PHP_FUNCTION(igbinary_serialize) {
+ }
+ /* }}} */
+ #if HAVE_PHP_SESSION
++/* {{{ igbinary_session_in_upload_progress */
++/**
++ * php_session_rfc1867_update() decodes and re-encodes the session while the request body
++ * is parsed, before RINIT, when no user code may run (GHSA-w8hw-w9fx-j79w).
++ * Like the php-src serializers then (see php_session_unserialize_init() in ext/session/session.c),
++ * igbinary keeps every object as __PHP_Incomplete_Class.
++ */
++static zend_always_inline bool igbinary_session_in_upload_progress(void) {
++	return PS(rfc1867_progress) != NULL && !PG(modules_activated);
++}
++/* }}} */
+ /* {{{ Serializer encode function */
+ /**
+  * This provides a serializer encode function for PHP's session module (using igbinary),
+@@ -879,6 +904,7 @@ PS_SERIALIZER_ENCODE_FUNC(igbinary)
+ 		zend_error(E_WARNING, "igbinary_serialize: cannot init igsd");
+ 		return ZSTR_EMPTY_ALLOC();
+ 	}
++	igsd.incomplete_classes_only = igbinary_session_in_upload_progress();
+ 
+ 	igbinary_serialize_header(&igsd);
+ 
+@@ -925,6 +951,7 @@ PS_SERIALIZER_DECODE_FUNC(igbinary) {
+ 	if (igbinary_unserialize_data_init(&igsd) != 0) {
+ 		return FAILURE;
+ 	}
++	igsd.incomplete_classes_only = igbinary_session_in_upload_progress();
+ 
+ 	igsd.buffer = (const uint8_t *)val;
+ 	igsd.buffer_ptr = igsd.buffer;
+@@ -1022,6 +1049,7 @@ inline static int igbinary_serialize_data_init(struct igbinary_serialize_data *i
+ 	igsd->string_count = 0;
+ 	igsd->buffer = buffer;
+ 	igsd->scalar = scalar;
++	igsd->incomplete_classes_only = false;
+ 	if (scalar) {
+ 		igsd->compact_strings = 0;
+ 	} else {
+@@ -1407,6 +1435,7 @@ inline static int igbinary_serialize_array(struct igbinary_serialize_data *igsd,
+ 
+ 	zend_string *key;
+ 	zend_long key_index;
++	zend_ulong numeric_key;
+ 
+ 	z_original = z;
+ 	ZVAL_DEREF(z);
+@@ -1473,6 +1502,11 @@ inline static int igbinary_serialize_array(struct igbinary_serialize_data *igsd,
+ 		if (key == NULL) {
+ 			/* Key is numeric */
+ 			RETURN_1_IF_NON_ZERO(igbinary_serialize_long(igsd, key_index));
++		} else if (UNEXPECTED(incomplete_class && igsd->incomplete_classes_only)
++		 && ZEND_HANDLE_NUMERIC_STR(ZSTR_VAL(key), ZSTR_LEN(key), numeric_key)) {
++			/* The data may have been the array returned by __serialize(), whose integer keys became
++			 * property names: igbinary_unserialize_array() would not turn "0" back into 0 for __unserialize(). */
++			RETURN_1_IF_NON_ZERO(igbinary_serialize_long(igsd, (zend_long)numeric_key));
+ 		} else {
+ 			/* Key is string */
+ 			RETURN_1_IF_NON_ZERO(igbinary_serialize_string(igsd, key));
+@@ -1731,6 +1765,31 @@ inline static int igbinary_serialize_object_name(struct igbinary_serialize_data
+ 	return 0;
+ }
+ /* }}} */
++/* igbinary_serialize_object_ser_data {{{ */
++/** Serializes the Serializable::serialize() data of an object, after its class name. */
++static int igbinary_serialize_object_ser_data(struct igbinary_serialize_data *igsd, const unsigned char *serialized_data, size_t serialized_len) {
++	if (serialized_len <= 0xff) {
++		RETURN_1_IF_NON_ZERO(igbinary_serialize8_and_8(igsd, igbinary_type_object_ser8, (uint8_t)serialized_len));
++	} else if (serialized_len <= 0xffff) {
++		RETURN_1_IF_NON_ZERO(igbinary_serialize8_and_16(igsd, (uint8_t)igbinary_type_object_ser16, (uint16_t)serialized_len));
++	} else {
++#if SIZEOF_ZEND_LONG > 4
++		if (UNEXPECTED(serialized_len > 0xffffffff)) {
++			zend_error(E_WARNING, "igbinary_serialize_object_old_serializer_class: serialize() data 4GB or larger is not supported");
++			return 1;
++		}
++#endif
++		RETURN_1_IF_NON_ZERO(igbinary_serialize8_and_32(igsd, (uint8_t)igbinary_type_object_ser32, (uint32_t)serialized_len));
++	}
++
++	RETURN_1_IF_NON_ZERO(igbinary_serialize_resize(igsd, serialized_len));
++
++	memcpy(igsd->buffer + igsd->buffer_size, serialized_data, serialized_len);
++	igsd->buffer_size += serialized_len;
++
++	return 0;
++}
++/* }}} */
+ /* igbinary_serialize_object_old_serializer_class {{{ */
+ static ZEND_COLD int igbinary_serialize_object_old_serializer_class(struct igbinary_serialize_data* igsd, zval *z, zend_class_entry *ce) {
+ 	unsigned char *serialized_data = NULL;
+@@ -1738,36 +1797,10 @@ static ZEND_COLD int igbinary_serialize_object_old_serializer_class(struct igbin
+ 	int r = 0;
+ 
+ 	if (ce->serialize(z, &serialized_data, &serialized_len, (zend_serialize_data *)NULL) == SUCCESS && !EG(exception)) {
+-		if (UNEXPECTED(igbinary_serialize_object_name(igsd, ce->name) != 0)) {
+-			goto failure;
+-		}
+-
+-		if (serialized_len <= 0xff) {
+-			if (UNEXPECTED(igbinary_serialize8_and_8(igsd, igbinary_type_object_ser8, (uint8_t)serialized_len) != 0)) {
+-				goto failure;
+-			}
+-		} else if (serialized_len <= 0xffff) {
+-			if (UNEXPECTED(igbinary_serialize8_and_16(igsd, (uint8_t)igbinary_type_object_ser16, (uint16_t)serialized_len) != 0)) {
+-				goto failure;
+-			}
+-		} else {
+-#if SIZEOF_ZEND_LONG > 4
+-			if (UNEXPECTED(serialized_len > 0xffffffff)) {
+-				zend_error(E_WARNING, "igbinary_serialize_object_old_serializer_class: serialize() data 4GB or larger is not supported");
+-				goto failure;
+-			}
+-#endif
+-			if (UNEXPECTED(igbinary_serialize8_and_32(igsd, (uint8_t)igbinary_type_object_ser32, (uint32_t)serialized_len) != 0)) {
+-				goto failure;
+-			}
+-		}
+-
+-		if (UNEXPECTED(igbinary_serialize_resize(igsd, serialized_len))) {
++		if (UNEXPECTED(igbinary_serialize_object_name(igsd, ce->name) != 0)
++		 || UNEXPECTED(igbinary_serialize_object_ser_data(igsd, serialized_data, serialized_len) != 0)) {
+ 			goto failure;
+ 		}
+-
+-		memcpy(igsd->buffer + igsd->buffer_size, serialized_data, serialized_len);
+-		igsd->buffer_size += serialized_len;
+ 	} else if (EG(exception)) {
+ 		/* exception, return failure */
+ failure:
+@@ -1874,6 +1907,44 @@ inline static int igbinary_serialize_object_enum_case(struct igbinary_serialize_
+ }
+ #endif
+ /* }}} */
++/* {{{ igbinary_serialize_incomplete_class_raw */
++/** Writes back the Serializable payload or the enum case name kept by incomplete_classes_only unserialization.
++ * Returns 2 when the object keeps neither, so that it is serialized like any other incomplete class. */
++static int igbinary_serialize_incomplete_class_raw(struct igbinary_serialize_data *igsd, zval *z) {
++	PHP_CLASS_ATTRIBUTES;
++	HashTable *props = Z_OBJ_P(z)->properties;
++	zval *payload;
++	zval *case_name = NULL;
++	int r;
++
++	if (!props) {
++		return 2;
++	}
++	payload = zend_hash_str_find(props, MAGIC_MEMBER_SERIALIZED, sizeof(MAGIC_MEMBER_SERIALIZED) - 1);
++	if (!payload || Z_TYPE_P(payload) != IS_STRING) {
++		payload = NULL;
++#if PHP_VERSION_ID >= 80100
++		case_name = zend_hash_str_find(props, MAGIC_MEMBER_ENUM_CASE, sizeof(MAGIC_MEMBER_ENUM_CASE) - 1);
++		if (!case_name || Z_TYPE_P(case_name) != IS_STRING) {
++			return 2;
++		}
++#else
++		return 2;
++#endif
++	}
++
++	PHP_SET_CLASS_ATTRIBUTES(z);
++	r = igbinary_serialize_object_name(igsd, class_name);
++	PHP_CLEANUP_CLASS_ATTRIBUTES();
++	RETURN_1_IF_NON_ZERO(r);
++
++	if (payload) {
++		return igbinary_serialize_object_ser_data(igsd, (const unsigned char *)Z_STRVAL_P(payload), Z_STRLEN_P(payload));
++	}
++	RETURN_1_IF_NON_ZERO(igbinary_serialize8(igsd, (uint8_t)igbinary_type_enum_case));
++	return igbinary_serialize_string(igsd, Z_STR_P(case_name));
++}
++/* }}} */
+ /* {{{ igbinary_serialize_object */
+ /** Serialize object.
+  * @see ext/standard/var.c
+@@ -1892,6 +1963,13 @@ inline static int igbinary_serialize_object(struct igbinary_serialize_data *igsd
+ 
+ 	ce = Z_OBJCE_P(z);
+ 
++	if (UNEXPECTED(igsd->incomplete_classes_only) && ce == PHP_IC_ENTRY) {
++		r = igbinary_serialize_incomplete_class_raw(igsd, z);
++		if (r != 2) {
++			return r;
++		}
++	}
++
+ 	if (IGBINARY_IS_NOT_SERIALIZABLE(ce)) {
+ 		zend_throw_exception_ex(NULL, 0, "Serialization of '%s' is not allowed", ZSTR_VAL(ce->name));
+ 		return 1;
+@@ -2081,6 +2159,7 @@ inline static int igbinary_unserialize_data_init(struct igbinary_unserialize_dat
+ #if PHP_VERSION_ID >= 70400
+ 	igsd->ref_props = NULL;
+ #endif
++	igsd->incomplete_classes_only = 0;
+ 
+ 	return 0;
+ }
+@@ -2823,6 +2902,17 @@ inline static int igbinary_unserialize_object_properties(struct igbinary_unseria
+ 				return 1;
+ 		}
+ 
++		/* The members incomplete_classes_only mode writes itself: data already carrying
++		 * one of them cannot be told apart from that bookkeeping, so it is rejected. */
++		if (UNEXPECTED(igsd->incomplete_classes_only)
++		 && (zend_string_equals_literal(key_str, MAGIC_MEMBER)
++		  || zend_string_equals_literal(key_str, MAGIC_MEMBER_SERIALIZED)
++		  || zend_string_equals_literal(key_str, MAGIC_MEMBER_ENUM_CASE))) {
++			zend_error(E_WARNING, "igbinary_unserialize_object_properties: property name %s is reserved for incomplete classes", ZSTR_VAL(key_str));
++			zend_string_release(key_str);
++			return 1;
++		}
++
+ 		/* first add key into array so references can properly and not stack allocated zvals */
+ 		/* Use NULL because inserting UNDEF into array does not add a new element */
+ 		ZVAL_NULL(&v);
+@@ -2943,15 +3033,17 @@ static ZEND_COLD int igbinary_unserialize_object_ser(struct igbinary_unserialize
+ 	int ret;
+ 	php_unserialize_data_t var_hash;
+ 
+-	if (ce->unserialize == NULL) {
+-		/* Should be impossible. */
+-		zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
+-		return 1;
+-	}
++	if (!igsd->incomplete_classes_only) {
++		if (ce->unserialize == NULL) {
++			/* Should be impossible. */
++			zend_error(E_WARNING, "Class %s has no unserializer", ZSTR_VAL(ce->name));
++			return 1;
++		}
+ 
+-	if (IGBINARY_IS_NOT_UNSERIALIZABLE(ce)) {
+-		zend_throw_exception_ex(NULL, 0, "Unserialization of '%s' is not allowed", ZSTR_VAL(ce->name));
+-		return 1;
++		if (IGBINARY_IS_NOT_UNSERIALIZABLE(ce)) {
++			zend_throw_exception_ex(NULL, 0, "Unserialization of '%s' is not allowed", ZSTR_VAL(ce->name));
++			return 1;
++		}
+ 	}
+ 
+ 	if (t == igbinary_type_object_ser8) {
+@@ -2982,6 +3074,18 @@ static ZEND_COLD int igbinary_unserialize_object_ser(struct igbinary_unserialize
+ 		return 1;
+ 	}
+ 
++	if (UNEXPECTED(igsd->incomplete_classes_only)) {
++		/* The class was not resolved: keep the payload verbatim, so that the object serializes back to the same data. */
++		zval payload;
++
++		ZEND_ASSERT(ce == PHP_IC_ENTRY);
++		object_init_ex(z, ce);
++		ZVAL_STRINGL(&payload, (const char *)igsd->buffer_ptr, n);
++		zend_hash_str_update(Z_OBJPROP_P(z), MAGIC_MEMBER_SERIALIZED, sizeof(MAGIC_MEMBER_SERIALIZED) - 1, &payload);
++		igsd->buffer_ptr += n;
++		return 0;
++	}
++
+ 	PHP_VAR_UNSERIALIZE_INIT(var_hash);
+ 	ret = ce->unserialize(
+ 		z,
+@@ -3001,32 +3105,56 @@ static ZEND_COLD int igbinary_unserialize_object_ser(struct igbinary_unserialize
+ 	return 0;
+ }
+ /* }}} */
+-/* {{{ igbinary_unserialize_object_enum_case */
++/* {{{ igbinary_unserialize_enum_case_name */
+ #if PHP_VERSION_ID >= 80100
+-/** Unserializes object's property array. This is used to serialize objects implementing Serializable -interface. */
+-static int igbinary_unserialize_object_enum_case(struct igbinary_unserialize_data *igsd, zval *const z, zend_class_entry *ce) {
+-	if (UNEXPECTED(!(ce->ce_flags & ZEND_ACC_ENUM))) {
+-		zend_error(E_WARNING, "igbinary_unserialize_object_enum_case: Class '%s' is not an enum", ZSTR_VAL(ce->name));
+-		return 1;
+-	}
++static zend_string *igbinary_unserialize_enum_case_name(struct igbinary_unserialize_data *igsd) {
+ 	if (IGB_NEEDS_MORE_DATA(igsd, 1)) {
+ 		zend_error(E_WARNING, "igbinary_unserialize_object_enum_case: end-of-data");
+-		return 1;
++		return NULL;
+ 	}
+ 
+ 	enum igbinary_type t = (enum igbinary_type)igbinary_unserialize8(igsd);
+-	zend_string *case_name;
+ 	switch (t) {
+ 		case igbinary_type_string8:
+ 		case igbinary_type_string16:
+ 		case igbinary_type_string32:
+ 		case igbinary_type_string64:
+-			case_name = igbinary_unserialize_chararray(igsd, t, 1);
+-			break;
++			return igbinary_unserialize_chararray(igsd, t, 1);
+ 		default:
+-			case_name = igbinary_unserialize_string(igsd, t);
+-			break;
++			return igbinary_unserialize_string(igsd, t);
++	}
++}
++#endif
++/* }}} */
++/* {{{ igbinary_unserialize_incomplete_enum_case */
++#if PHP_VERSION_ID >= 80100
++/** Keeps an enum case as __PHP_Incomplete_Class in incomplete_classes_only mode, without loading the enum. */
++static int igbinary_unserialize_incomplete_enum_case(struct igbinary_unserialize_data *igsd, zval *const z, zend_string *class_name) {
++	zval case_zv;
++	zend_string *case_name = igbinary_unserialize_enum_case_name(igsd);
++	if (UNEXPECTED(!case_name)) {
++		return 1;
++	}
++
++	object_init_ex(z, PHP_IC_ENTRY);
++	php_store_class_name(z, class_name);
++	ZVAL_STR(&case_zv, case_name);
++	zend_hash_str_update(Z_OBJPROP_P(z), MAGIC_MEMBER_ENUM_CASE, sizeof(MAGIC_MEMBER_ENUM_CASE) - 1, &case_zv);
++
++	return 0;
++}
++#endif
++/* }}} */
++/* {{{ igbinary_unserialize_object_enum_case */
++#if PHP_VERSION_ID >= 80100
++/** Unserializes object's property array. This is used to serialize objects implementing Serializable -interface. */
++static int igbinary_unserialize_object_enum_case(struct igbinary_unserialize_data *igsd, zval *const z, zend_class_entry *ce) {
++	if (UNEXPECTED(!(ce->ce_flags & ZEND_ACC_ENUM))) {
++		zend_error(E_WARNING, "igbinary_unserialize_object_enum_case: Class '%s' is not an enum", ZSTR_VAL(ce->name));
++		return 1;
+ 	}
++
++	zend_string *case_name = igbinary_unserialize_enum_case_name(igsd);
+ 	if (UNEXPECTED(!case_name)) {
+ 		return 1;
+ 	}
+@@ -3095,6 +3223,13 @@ zend_always_inline static int igbinary_unserialize_object(struct igbinary_unseri
+ 		zval args[1];
+ 		const char* user_func_name;
+ 
++		if (UNEXPECTED(igsd->incomplete_classes_only)) {
++			/* Do not look the class up at all, so that no user code can run. */
++			incomplete_class = true;
++			ce = PHP_IC_ENTRY;
++			break;
++		}
++
+ 		/* Try to find class directly */
+ 		if (EXPECTED((ce = zend_lookup_class(class_name)) != NULL)) {
+ 			/* FIXME: lookup class may cause exception in load callback */
+@@ -3252,13 +3387,15 @@ zend_always_inline static int igbinary_unserialize_object(struct igbinary_unseri
+ 		}
+ 		case igbinary_type_enum_case:
+ #if PHP_VERSION_ID >= 80100
+-			if (UNEXPECTED(incomplete_class)) {
++			if (UNEXPECTED(igsd->incomplete_classes_only)) {
++				r = igbinary_unserialize_incomplete_enum_case(igsd, z, class_name);
++			} else if (UNEXPECTED(incomplete_class)) {
+ 				zend_error(E_WARNING, "igbinary_unserialize_object_enum_case: Class '%s' does not exist", ZSTR_VAL(class_name));
+-				zend_string_release(class_name);
+-				return 1;
++				r = 1;
++			} else {
++				r = igbinary_unserialize_object_enum_case(igsd, z, ce);
+ 			}
+ 			zend_string_release(class_name);
+-			r = igbinary_unserialize_object_enum_case(igsd, z, ce);
+ 			if (r) {
+ 				return r;
+ 			}
+diff --git a/tests/igbinary_session_upload_progress.phpt b/tests/igbinary_session_upload_progress.phpt
+new file mode 100644
+index 0000000..5aa6d71
+--- /dev/null
++++ b/tests/igbinary_session_upload_progress.phpt
+@@ -0,0 +1,169 @@
++--TEST--
++Session upload progress keeps igbinary session objects as __PHP_Incomplete_Class and runs no user code
++--SKIPIF--
++<?php
++if (!extension_loaded('session')) die('skip session extension not loaded');
++if (PHP_VERSION_ID < 80200) die('skip needs PHP 8.2 or later');
++if (!getenv('TEST_PHP_CGI_EXECUTABLE')) die('skip CGI not available');
++if (@ini_set('session.serialize_handler', 'igbinary') === false) die('skip igbinary session serializer not available');
++?>
++--INI--
++error_reporting=E_ALL & ~E_DEPRECATED
++--FILE--
++<?php
++/* php_session_rfc1867_update() decodes and writes back the session before RINIT
++ * (GHSA-w8hw-w9fx-j79w). No class may be looked up then: unserialize_callback_func
++ * would run, Serializable payloads could not be kept, and data carrying the
++ * incomplete class bookkeeping member could change class. */
++ob_start();
++
++class W { public $a = 1; public $woke = 0; function __wakeup() { $this->woke++; } }
++class Cust implements Serializable {
++    public $x = 'payload';
++    function serialize() { return $this->x; }
++    function unserialize($d) { $this->x = $d; }
++}
++class L {
++    public $p, $q;
++    function __construct($p = null, $q = null) { $this->p = $p; $this->q = $q; }
++    function __serialize(): array { return [$this->p, $this->q]; }
++    function __unserialize(array $d): void { [$this->p, $this->q] = [$d[0], $d[1]]; }
++}
++enum Suit: string { case Hearts = 'H'; }
++
++$dir = __DIR__ . '/igbinary_session_upload_progress';
++@mkdir($dir);
++$worker = "$dir/worker.php";
++file_put_contents($worker, '<?php');
++
++ini_set('session.save_path', $dir);
++ini_set('session.use_cookies', '0');
++ini_set('session.cache_limiter', '');
++ini_set('session.serialize_handler', 'igbinary');
++
++function read_record($sid) {
++    session_id($sid);
++    session_start();
++    unset($_SESSION['upload_progress_key']);
++    $s = serialize($_SESSION);
++    session_abort();
++    return $s;
++}
++
++$shared = new W;
++$self = new stdClass;
++$self->self = $self;
++$self->{'0'} = 'zero';
++$storage = new SplObjectStorage;
++$storage[$shared] = 'data';
++$array = ['k' => 1];
++session_id('mixed');
++session_start();
++$_SESSION = [
++    'w' => $shared, 'w2' => $shared,
++    'c' => new Cust, 'l' => new L(10, [20, 30]),
++    'ao' => new ArrayObject([5 => 'five', 'k' => 'v']),
++    'dt' => new DateTime('2026-10-22 12:00:00', new DateTimeZone('UTC')),
++    'e1' => Suit::Hearts, 'e2' => Suit::Hearts, 'st' => $storage, 'self' => $self,
++];
++$_SESSION['r1'] = &$array;
++$_SESSION['r2'] = &$array;
++session_write_close();
++
++$reserved = new stdClass;
++$reserved->{'__PHP_Incomplete_Class_Name'} = 'W';
++session_id('reserved');
++session_start();
++$_SESSION['x'] = $reserved;
++session_write_close();
++
++$before = read_record('mixed');
++
++/* php-cgi is started with -n, so the shared session and igbinary modules have to be named again. */
++$cmd = [getenv('TEST_PHP_CGI_EXECUTABLE'), '-n', '-q'];
++foreach (['session', 'igbinary'] as $ext) {
++    foreach ([ini_get('extension_dir'), PHP_EXTENSION_DIR] as $extdir) {
++        if (file_exists("$extdir/$ext." . PHP_SHLIB_SUFFIX)) {
++            array_push($cmd, '-d', "extension=$extdir/$ext." . PHP_SHLIB_SUFFIX);
++            break;
++        }
++    }
++}
++$ini = [
++    'error_reporting' => 'E_ALL', 'display_errors' => '1', 'html_errors' => '0',
++    'unserialize_callback_func' => 'var_dump',
++    'session.save_path' => $dir, 'session.use_strict_mode' => '0', 'session.use_cookies' => '0',
++    'session.cache_limiter' => '', 'session.serialize_handler' => 'igbinary',
++    'session.upload_progress.enabled' => '1', 'session.upload_progress.cleanup' => '0',
++    'session.upload_progress.prefix' => 'upload_progress_',
++    'session.upload_progress.name' => 'PHP_SESSION_UPLOAD_PROGRESS',
++    'session.upload_progress.freq' => '1%', 'session.upload_progress.min_freq' => '0.000000001',
++];
++foreach ($ini as $name => $value) {
++    array_push($cmd, '-d', "$name=$value");
++}
++array_push($cmd, '-f', $worker);
++
++function upload($cmd, $dir, $worker, $sid) {
++    $boundary = '---------------------------20896060251896012921717172737';
++    $body = "--$boundary\r\n"
++          . "Content-Disposition: form-data; name=\"PHPSESSID\"\r\n\r\n$sid\r\n"
++          . "--$boundary\r\n"
++          . "Content-Disposition: form-data; name=\"PHP_SESSION_UPLOAD_PROGRESS\"\r\n\r\nkey\r\n"
++          . "--$boundary\r\n"
++          . "Content-Disposition: form-data; name=\"file1\"; filename=\"file1.txt\"\r\n\r\n1\r\n"
++          . "--$boundary--\r\n";
++    $env = getenv();
++    $env['REDIRECT_STATUS'] = '1';
++    $env['REQUEST_METHOD'] = 'POST';
++    $env['CONTENT_TYPE'] = "multipart/form-data; boundary=$boundary";
++    $env['CONTENT_LENGTH'] = (string) strlen($body);
++    $env['SCRIPT_FILENAME'] = $worker;
++    $env['PATH_TRANSLATED'] = $worker;
++    $env['QUERY_STRING'] = '';
++    $proc = proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $dir, $env);
++    fwrite($pipes[0], $body);
++    fclose($pipes[0]);
++    $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
++    fclose($pipes[1]);
++    fclose($pipes[2]);
++    proc_close($proc);
++    return $out;
++}
++
++$out = upload($cmd, $dir, $worker, 'mixed');
++$file = file_exists("$dir/sess_mixed") ? file_get_contents("$dir/sess_mixed") : '';
++$results = [
++    'user code ran' => strpos($out, 'string(') !== false,
++    'warnings' => substr_count($out, 'Warning:'),
++    'progress recorded' => strpos($file, 'upload_progress_key') !== false,
++    'data unchanged' => read_record('mixed') === $before,
++];
++$out = upload($cmd, $dir, $worker, 'reserved');
++$results['reserved member refused'] = strpos($out, 'Session has been destroyed') !== false;
++
++echo ob_get_clean();
++var_dump($results);
++?>
++--CLEAN--
++<?php
++$dir = __DIR__ . '/igbinary_session_upload_progress';
++@unlink("$dir/worker.php");
++foreach (glob("$dir/sess_*") as $f) {
++    unlink($f);
++}
++@rmdir($dir);
++?>
++--EXPECT--
++array(5) {
++  ["user code ran"]=>
++  bool(false)
++  ["warnings"]=>
++  int(0)
++  ["progress recorded"]=>
++  bool(true)
++  ["data unchanged"]=>
++  bool(true)
++  ["reserved member refused"]=>
++  bool(true)
++}

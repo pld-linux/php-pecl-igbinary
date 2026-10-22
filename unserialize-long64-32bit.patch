@@ -1,0 +1,20 @@
+On 32-bit zend_long a 64-bit integer was read without checking that 8 bytes remain.
+
+diff --git a/src/php7/igbinary.c b/src/php7/igbinary.c
+index 23c0fe4..664da40 100644
+--- a/src/php7/igbinary.c
++++ b/src/php7/igbinary.c
+@@ -2352,12 +2352,11 @@ inline static int igbinary_unserialize_long(struct igbinary_unserialize_data *ig
+ 		*ret = (zend_long)(t == igbinary_type_long32n ? -1 : 1) * tmp32;
+ 	} else {
+ 		ZEND_ASSERT(t == igbinary_type_long64p || t == igbinary_type_long64n);
+-#if SIZEOF_ZEND_LONG == 8
+ 		if (IGB_NEEDS_MORE_DATA(igsd, 8)) {
+ 			zend_error(E_WARNING, "igbinary_unserialize_long: end-of-data");
+ 			return 1;
+ 		}
+-
++#if SIZEOF_ZEND_LONG == 8
+ 		/* check for boundaries (perform only one comparison in common case) */
+ 		tmp64 = igbinary_unserialize64(igsd);
+ 		if (UNEXPECTED(tmp64 >= 0x8000000000000000 && (tmp64 > 0x8000000000000000 || t == igbinary_type_long64p))) {

@@ -1,0 +1,24 @@
+Truncated data after the class name of an object with __unserialize() left the
+__unserialize() argument uninitialized, and deinit called zval_ptr_dtor() on it.
+
+diff --git a/src/php7/igbinary.c b/src/php7/igbinary.c
+index 6747818..23c0fe4 100644
+--- a/src/php7/igbinary.c
++++ b/src/php7/igbinary.c
+@@ -3335,9 +3335,16 @@ zend_always_inline static int igbinary_unserialize_object(struct igbinary_unseri
+ 					zval param;
+ 					int result;
+ 					zend_string_release(class_name);
++					ZVAL_UNDEF(&param);
+ 					result = igbinary_unserialize_array(igsd, t, &param, 0, false);
+ 					ZVAL_DEREF(z);
+ 					ZEND_ASSERT(Z_TYPE_P(z) == IS_OBJECT);
++					if (UNEXPECTED(Z_TYPE(param) != IS_ARRAY)) {
++						/* Failed before creating the array: there is nothing to pass to __unserialize(),
++						 * which will not be called, so the destructor must not run either. */
++						GC_ADD_FLAGS(Z_OBJ_P(z), IS_OBJ_DESTRUCTOR_CALLED);
++						return 1;
++					}
+ 					igsd_defer_unserialize(igsd, Z_OBJ_P(z), param);
+ 					return result;
+ 				}
